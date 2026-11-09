@@ -1,1 +1,525 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ルービックキューブ自動解法</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 16px;
+  background: #0D2A52;
+  color: #222;
+  font-family: sans-serif;
+}
+main { max-width: 900px; margin: auto; }
+h1 { font-size: 24px; 
+color: white;}
+.note, .face, #status, #result {
+  background: black;
+  border-radius: 9px;
+  padding: 12px;
+}
+.note { line-height: 1.8; }
+.faces {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.face { text-align: center; padding: 9px; }
+.face h3 { font-size: 14px; margin: 4px 0 9px; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+}
+.cell {
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 2px solid #444;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.cell:focus-visible { outline: 3px solid #1769d2; }
+.center { border-width: 3px; cursor: default; }
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+}
+.dot {
+  width: 18px;
+  height: 18px;
+  border: 1px solid #555;
+  border-radius: 3px;
+}
+.action {
+  border: 0;
+  border-radius: 7px;
+  padding: 12px 16px;
+  margin: 4px 4px 4px 0;
+  cursor: pointer;
+  font-size: 15px;
+}
+.primary { background: #1769d2; color: white; }
+.secondary { background: #e0e5ec; color: #222; }
+.action:disabled { opacity: .6; cursor: wait; }
+#status, #result { margin-top: 14px; overflow-wrap: anywhere; }
+.error { color: #b42318; }
+.success { color: #137333; }
+#moves {
+  font-size: 22px;
+  line-height: 1.9;
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+.small { font-size: 13px; line-height: 1.8; color: #555; }
+
+.color-palette {
+  position: absolute;
+  z-index: 1000;
+  display: grid;
+  grid-template-columns: repeat(3, 38px);
+  gap: 7px;
+  padding: 9px;
+  background: white;
+  border: 1px solid #777;
+  border-radius: 9px;
+  box-shadow: 0 4px 14px #0003;
+}
+.color-option {
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  padding: 0;
+  border: 2px solid #555;
+  border-radius: 5px;
+  cursor: pointer;
+}
+@media(max-width:520px) {
+  body { padding: 8px; }
+  .faces { gap: 6px; }
+  .face { padding: 5px; }
+  .face h3 { font-size: 12px; }
+  .cell { border-width: 1px; }
+}
+</style>
+<link rel="stylesheet" href="css.css">
+</head>
+<body>
+<main>
+<h1>3×3ルービックキューブ自動解法</h1>
+
+<div class="note">
+  1. マスをクリックして、6色から正しい色を選んでください。<br>
+  2. 6面すべてを入力してください。中央の色は変更できません。<br>
+  3. 「解法を計算」を押すと、回転記号を表示します。<br>
+  4. 入力状態と解法結果の両方を検証し、確認できない場合は手順を表示しません。
+</div>
+
+<div class="legend" id="legend"></div>
+<div class="faces" id="faces"></div>
+
+<button class="action primary" id="solve">解法を計算</button>
+<button class="action secondary" id="reset">初期状態に戻す</button>
+
+<div id="status" aria-live="polite">
+  色を入力してください。
+</div>
+
+<section id="result" hidden>
+  <h2>完成までの回転手順</h2>
+  <p id="count"></p>
+  <div id="moves"></div>
+  <p class="small">
+    R＝右面、L＝左面、U＝上面、D＝下面、F＝前面、B＝背面。<br>
+    記号のみ＝時計回り、'＝反時計回り、2＝180度回転。<br>
+    時計回り・反時計回りは、それぞれ回す面を正面から見た方向です。
+  </p>
+  <button class="action secondary" id="copy">手順をコピー</button>
+</section>
+
+<p class="small">
+  面の向きは重要です。各面を外側から見て入力してください。
+  不可能な色配置や検証に失敗した状態には解法を出しません。
+  解法ライブラリを読み込むためインターネット接続が必要です。
+</p>
+</main>
+
+<script type="module">
+const COLORS = [
+  { name: "白", value: "white", code: "U" },
+  { name: "赤", value: "red", code: "R" },
+  { name: "緑", value: "green", code: "F" },
+  { name: "黄", value: "yellow", code: "D" },
+  { name: "オレンジ", value: "orange", code: "L" },
+  { name: "青", value: "blue", code: "B" }
+];
+
+const FACES = ["U", "R", "F", "D", "L", "B"];
+const FACE_COLORS = {
+  U: "white",
+  R: "red",
+  F: "green",
+  D: "yellow",
+  L: "orange",
+  B: "blue"
+};
+
+const faceNames = {
+  U: "上面", R: "右面", F: "前面",
+  D: "下面", L: "左面", B: "背面"
+};
+
+const stickers = [];
+const facesElement = document.getElementById("faces");
+const statusElement = document.getElementById("status");
+const resultElement = document.getElementById("result");
+const solveButton = document.getElementById("solve");
+
+let Cube = null;
+let solverReady = false;
+let busy = false;
+
+function status(message, error = false) {
+  statusElement.textContent = message;
+  statusElement.className = error ? "error" : "success";
+}
+
+function closePalettes() {
+  document.querySelectorAll(".color-palette")
+    .forEach(el => el.remove());
+}
+
+function makeLegend() {
+  const legend = document.getElementById("legend");
+
+  COLORS.forEach(color => {
+    const item = document.createElement("span");
+    const dot = document.createElement("i");
+
+    dot.className = "dot";
+    dot.style.backgroundColor = color.value;
+
+    item.append(dot, document.createTextNode(color.name));
+    legend.appendChild(item);
+  });
+}
+
+function openPalette(sticker) {
+  closePalettes();
+
+  const palette = document.createElement("div");
+  palette.className = "color-palette";
+
+  COLORS.forEach(color => {
+    const option = document.createElement("button");
+
+    option.type = "button";
+    option.className = "color-option";
+    option.style.backgroundColor = color.value;
+    option.title = color.name;
+    option.setAttribute("aria-label", color.name);
+
+    option.addEventListener("click", event => {
+      event.stopPropagation();
+
+      sticker.color = color.value;
+      sticker.element.style.backgroundColor = color.value;
+      sticker.element.setAttribute(
+        "aria-label",
+        `${faceNames[sticker.face]} ${sticker.index + 1}番：${color.name}`
+      );
+
+      closePalettes();
+      resultElement.hidden = true;
+      status("色を変更しました。入力後に解法を計算してください。");
+    });
+
+    palette.appendChild(option);
+  });
+
+  document.body.appendChild(palette);
+
+  const rect = sticker.element.getBoundingClientRect();
+  const pw = palette.offsetWidth;
+  const ph = palette.offsetHeight;
+
+  let left = rect.left + window.scrollX;
+  let top = rect.bottom + window.scrollY + 4;
+
+  left = Math.max(
+    window.scrollX + 4,
+    Math.min(left, window.scrollX + window.innerWidth - pw - 4)
+  );
+
+  if (rect.bottom + ph + 4 > window.innerHeight) {
+    top = rect.top + window.scrollY - ph - 4;
+  }
+
+  palette.style.left = `${left}px`;
+  palette.style.top = `${Math.max(window.scrollY + 4, top)}px`;
+
+  const outside = event => {
+    if (!palette.contains(event.target)) {
+      palette.remove();
+      document.removeEventListener("pointerdown", outside, true);
+    }
+  };
+
+  setTimeout(() => {
+    document.addEventListener("pointerdown", outside, true);
+  }, 0);
+}
+
+function makeFaces() {
+  FACES.forEach(face => {
+    const panel = document.createElement("section");
+    panel.className = "face";
+
+    const heading = document.createElement("h3");
+    heading.textContent = `${face}：${faceNames[face]}`;
+
+    const grid = document.createElement("div");
+    grid.className = "grid";
+
+    for (let i = 0; i < 9; i++) {
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = "cell";
+      cell.style.backgroundColor = FACE_COLORS[face];
+
+      const sticker = {
+        face,
+        index: i,
+        color: FACE_COLORS[face],
+        element: cell
+      };
+
+      stickers.push(sticker);
+
+      cell.setAttribute(
+        "aria-label",
+        `${faceNames[face]} ${i + 1}番`
+      );
+
+      if (i === 4) {
+        cell.classList.add("center");
+        cell.disabled = true;
+        cell.title = "中央の色は固定です";
+      } else {
+        cell.title = "クリックして色を選択";
+        cell.addEventListener("click", () => openPalette(sticker));
+      }
+
+      grid.appendChild(cell);
+    }
+
+    panel.append(heading, grid);
+    facesElement.appendChild(panel);
+  });
+}
+
+function getFacelets() {
+  return FACES.map(face =>
+    stickers
+      .filter(s => s.face === face)
+      .sort((a, b) => a.index - b.index)
+      .map(s => {
+        const color = COLORS.find(c => c.value === s.color);
+        if (!color) throw new Error("未設定の色があります。");
+        return color.code;
+      })
+      .join("")
+  ).join("");
+}
+
+function validateColors(facelets) {
+  if (facelets.length !== 54) {
+    throw new Error("54マスすべてを確認してください。");
+  }
+
+  for (const code of FACES) {
+    const count = [...facelets].filter(c => c === code).length;
+
+    if (count !== 9) {
+      const name = COLORS.find(c => c.code === code).name;
+      throw new Error(
+        `${name}色が${count}マスです。各色を9マスにしてください。`
+      );
+    }
+  }
+
+  for (let i = 0; i < FACES.length; i++) {
+    if (facelets[i * 9 + 4] !== FACES[i]) {
+      throw new Error("中央の色の配置が正しくありません。");
+    }
+  }
+}
+
+async function loadSolver() {
+  if (Cube) return Cube;
+
+  const module = await import("https://esm.sh/cubejs@1.3.2");
+  const candidate = module.default || module.Cube || module;
+
+  if (
+    typeof candidate.fromString !== "function" ||
+    typeof candidate.initSolver !== "function"
+  ) {
+    throw new Error(
+      "解法ライブラリの読み込みに失敗しました。通信環境を確認してください。"
+    );
+  }
+
+  Cube = candidate;
+  return Cube;
+}
+
+function verifySolution(cube, solution) {
+  // 元の状態を変更しないよう複製して検証する
+  if (typeof cube.clone !== "function") {
+    throw new Error("検証用の複製機能がありません。");
+  }
+
+  const testCube = cube.clone();
+
+  if (solution.trim()) {
+    testCube.move(solution.trim());
+  }
+
+  if (typeof testCube.isSolved !== "function") {
+    throw new Error("完成状態を確認する機能がありません。");
+  }
+
+  if (!testCube.isSolved()) {
+    throw new Error(
+      "計算された手順を適用しても完成しませんでした。手順は表示しません。"
+    );
+  }
+}
+
+solveButton.addEventListener("click", async () => {
+  if (busy) return;
+
+  busy = true;
+  solveButton.disabled = true;
+  resultElement.hidden = true;
+  closePalettes();
+
+  try {
+    status("入力状態を検証しています…");
+
+    const facelets = getFacelets();
+    validateColors(facelets);
+
+    const solvedFacelets = FACES.map(face => face.repeat(9)).join("");
+
+    if (facelets === solvedFacelets) {
+      document.getElementById("count").textContent = "0手";
+      document.getElementById("moves").textContent = "";
+      resultElement.hidden = false;
+      status("既に揃っています");
+      return;
+    }
+
+    status("解法ライブラリを読み込んでいます…");
+    const Solver = await loadSolver();
+
+    if (!solverReady) {
+      status("解法テーブルを準備しています。初回は時間がかかります…");
+      await new Promise(resolve => setTimeout(resolve, 50));
+      Solver.initSolver();
+      solverReady = true;
+    }
+
+    status("解法を計算し、結果を検証しています…");
+
+    const cube = Solver.fromString(facelets);
+    const solution = cube.solve();
+
+    if (typeof solution !== "string") {
+      throw new Error(
+        "解法が見つかりません。入力の向きや色配置を確認してください。"
+      );
+    }
+
+    // 計算結果を必ず適用して完成するか確認
+    verifySolution(cube, solution);
+
+    const moves = solution.trim()
+      ? solution.trim().split(/\s+/)
+      : [];
+
+    if (moves.length === 0) {
+      document.getElementById("count").textContent = "0手";
+      document.getElementById("moves").textContent = "";
+      resultElement.hidden = false;
+      status("既にそろっています");
+      return;
+    }
+
+    document.getElementById("count").textContent =
+      `${moves.length}手（解法エンジンの計算結果）`;
+
+    document.getElementById("moves").textContent = moves.join(" ");
+
+    resultElement.hidden = false;
+    status("検証成功：手順を適用すると完成することを確認しました。");
+
+  } catch (error) {
+    resultElement.hidden = true;
+    status(
+      "解法を出せませんでした：" +
+      (error?.message || "入力状態を確認してください。"),
+      true
+    );
+  } finally {
+    busy = false;
+    solveButton.disabled = false;
+  }
+});
+
+document.getElementById("reset").addEventListener("click", () => {
+  if (busy) return;
+
+  closePalettes();
+
+  stickers.forEach(sticker => {
+    sticker.color = FACE_COLORS[sticker.face];
+    sticker.element.style.backgroundColor = sticker.color;
+  });
+
+  resultElement.hidden = true;
+  status("初期状態に戻しました。");
+});
+
+document.getElementById("copy").addEventListener("click", async () => {
+  const text = document.getElementById("moves").textContent;
+
+  try {
+    await navigator.clipboard.writeText(text);
+    status("手順をコピーしました。");
+  } catch {
+    status("コピーに失敗しました。手順を選択してコピーしてください。", true);
+  }
+});
+
+makeLegend();
+makeFaces();
+</script>
+</body>
+</html>
+
+
 
